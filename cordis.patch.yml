@@ -1,0 +1,9 @@
+# dsh-clash-proxy — on-demand rule-splitting proxy for the agent's own web access.
+#
+# This layer only mounts the plugin. The listener stays DOWN until `proxy_control({action:"on"})`
+# is called, so nothing changes for normal sessions: no system proxy, no TUN, and the model API
+# traffic keeps its original path (the plugin does not touch globalThis.fetch or process.env).
+- insert:
+    - id: clash-proxy
+      name: dsh-clash-proxy
+      config: {}

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>代理面板</title>
+		<link rel="stylesheet" href="app.css" />
+	</head>
+	<body>
+		<header class="topbar">
+			<div class="brand">
+				<span class="logo" aria-hidden="true">⇄</span>
+				<div>
+					<h1>代理面板</h1>
+					<p class="sub" id="engine-line">正在读取状态…</p>
+				</div>
+			</div>
+			<div class="topbar-right">
+				<span class="pill" id="state-pill">…</span>
+				<button class="switch" id="master-switch" type="button" aria-pressed="false" title="总开关（用户控制）">
+					<span class="knob"></span>
+					<span class="switch-text" id="master-label">代理已关闭</span>
+				</button>
+			</div>
+		</header>
+
+		<main id="app" class="grid">
+			<section class="card span-2" id="card-channels">
+				<h2>通道与作用范围</h2>
+				<p class="hint">总开关打开后，按通道分别决定是否走代理。`自动` 先看规则（国内直连），再探测直连快慢。</p>
+				<div class="channel" data-channel="web">
+					<div class="channel-name"><strong>网页抓取</strong><span class="muted">web_fetch</span></div>
+					<label class="check"><input type="checkbox" data-scope="web" /> 启用</label>
+					<label class="seg">
+						模式
+						<select data-mode="web">
+							<option value="off">关闭</option>
+							<option value="on">总是代理</option>
+							<option value="auto">自动</option>
+						</select>
+					</label>
+				</div>
+				<div class="channel" data-channel="search">
+					<div class="channel-name"><strong>搜索</strong><span class="muted">web_search 上游</span></div>
+					<label class="check"><input type="checkbox" data-scope="search" /> 启用</label>
+					<label class="seg">
+						模式
+						<select data-mode="search">
+							<option value="off">关闭</option>
+							<option value="on">总是代理</option>
+							<option value="auto">自动</option>
+						</select>
+					</label>
+				</div>
+				<div class="channel" data-channel="scripts">
+					<div class="channel-name"><strong>脚本 / 其它实例</strong><span class="muted">node:http(s) 调用</span></div>
+					<label class="check"><input type="checkbox" data-scope="scripts" /> 启用</label>
+					<label class="seg"><span class="muted">作用：进程内其他插件/脚本的直连请求</span></label>
+				</div>
+				<div class="channel" data-channel="browser">
+					<div class="channel-name"><strong>浏览器实例</strong><span class="muted">面板自建的 Chromium</span></div>
+					<label class="check"><input type="checkbox" data-scope="browser" /> 启用</label>
+					<label class="seg"><span class="muted">dsh-reef 的浏览器不受影响（无注入点）</span></label>
+				</div>
+			</section>
+
+			<section class="card" id="card-connectivity">
+				<h2>连通性与带宽</h2>
+				<div class="row">
+					<button data-act="connectivity" type="button">连通性测试</button>
+					<button data-act="latency-all" type="button" class="ghost">全部节点延迟</button>
+				</div>
+				<div class="row">
+					<button data-act="bandwidth" type="button">当前节点测带宽</button>
+					<span class="muted" id="busy-hint"></span>
+				</div>
+				<pre class="result" id="test-result">尚未测试</pre>
+				<dl class="facts" id="engine-facts"></dl>
+			</section>
+
+			<section class="card span-2" id="card-nodes">
+				<h2>节点</h2>
+				<div class="row">
+					<input id="sub-url" type="url" placeholder="订阅链接（留空用已保存/环境变量）" />
+					<button data-act="refresh" type="button" class="ghost">刷新订阅</button>
+				</div>
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr><th>节点</th><th>类型</th><th>延迟</th><th>带宽</th><th></th></tr>
+						</thead>
+						<tbody id="node-rows">
+							<tr><td colspan="5" class="muted">加载中…</td></tr>
+						</tbody>
+					</table>
+				</div>
+			</section>
+
+			<section class="card" id="card-spoof">
+				<h2>伪装</h2>
+				<label class="check strong"><input type="checkbox" id="spoof-enabled" /> 启用伪装</label>
+				<div class="fields">
+					<label>User-Agent<select id="spoof-ua"></select></label>
+					<label>自定义 UA<input id="spoof-ua-custom" type="text" placeholder="留空用预设" /></label>
+					<label>Accept-Language<input id="spoof-lang" type="text" /></label>
+					<label>时区<input id="spoof-tz" type="text" placeholder="America/New_York" /></label>
+					<label>语言 locale<input id="spoof-locale" type="text" placeholder="en-US" /></label>
+					<label>
+						WebRTC
+						<select id="spoof-webrtc">
+							<option value="off">不处理</option>
+							<option value="strip">剥离候选（推荐）</option>
+							<option value="disabled">禁用 RTCPeerConnection</option>
+						</select>
+					</label>
+					<label>
+						DNS（偏好记录）
+						<select id="spoof-dns">
+							<option value="remote">远程解析（随代理，实际行为）</option>
+							<option value="local">本地解析（仅记录）</option>
+						</select>
+					</label>
+					<label class="check"><input type="checkbox" id="spoof-hints" /> 伪装 sec-ch-ua 客户端提示</label>
+					<label class="check"><input type="checkbox" id="spoof-webdriver" /> 隐藏 navigator.webdriver</label>
+				</div>
+				<div class="row">
+					<button data-act="save-spoof" type="button">保存伪装设置</button>
+					<button data-act="browser-open" type="button" class="ghost">启动面板浏览器</button>
+					<button data-act="browser-close" type="button" class="ghost">关闭</button>
+				</div>
+				<pre class="result" id="browser-result">浏览器未启动</pre>
+			</section>
+
+			<section class="card span-2" id="card-decisions">
+				<div class="card-head">
+					<h2>决策日志</h2>
+					<button data-act="clear-decisions" type="button" class="ghost small">清空</button>
+				</div>
+				<p class="hint">每次请求为什么走/不走代理，最近 60 条。</p>
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr><th>时间</th><th>主机</th><th>决定</th><th>依据</th><th>通道</th></tr>
+						</thead>
+						<tbody id="decision-rows">
+							<tr><td colspan="5" class="muted">暂无</td></tr>
+						</tbody>
+					</table>
+				</div>
+			</section>
+
+			<section class="card span-2" id="card-env">
+				<h2>给外部进程用的代理环境变量</h2>
+				<p class="hint">只在代理已启动时有效；仅对本机回环端口。</p>
+				<pre class="result" id="env-text">—</pre>
+			</section>
+		</main>
+
+		<div class="toast" id="toast" role="status" aria-live="polite"></div>
+		<script src="app.js"></script>
+	</body>
+</html>
