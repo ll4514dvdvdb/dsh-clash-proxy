@@ -1,6 +1,6 @@
 {
   "name": "dsh-clash-proxy",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "author": "Mapleassault (ll4514dvdvdb)",
   "repository": {
@@ -72,5 +72,10 @@
       ],
       "platform": "web"
     }
+  },
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "smoke": "node scripts/smoke-panel.mjs && node scripts/smoke-host.mjs && node scripts/smoke-controller.mjs && node scripts/smoke-client.mjs",
+    "smoke:net": "node smoke.mjs"
   }
 }

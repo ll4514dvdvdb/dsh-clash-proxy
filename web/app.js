@@ -6,6 +6,9 @@
 	const API = "/clash-proxy-panel/api/";
 	const $ = (selector) => document.querySelector(selector);
 	const $$ = (selector) => [...document.querySelectorAll(selector)];
+	// Per-process token injected into index.html by lib/panel/routes.js. It never
+	// appears in the URL, and the API rejects requests without it.
+	const TOKEN = document.querySelector('meta[name="clash-proxy-token"]')?.getAttribute("content") ?? "";
 
 	let state = null;
 	let toastTimer = 0;
@@ -22,7 +25,10 @@
 	async function api(path, body) {
 		const response = await fetch(API + path, {
 			method: body === undefined ? "GET" : "POST",
-			headers: { "x-clash-proxy": "1", ...(body === undefined ? {} : { "content-type": "application/json" }) },
+			headers: {
+				"x-clash-proxy-token": TOKEN,
+				...(body === undefined ? {} : { "content-type": "application/json" })
+			},
 			body: body === undefined ? undefined : JSON.stringify(body),
 			cache: "no-store"
 		});
@@ -68,6 +74,13 @@
 		$("#engine-line").textContent = engine.error
 			? `引擎错误：${engine.error}`
 			: `节点 ${engine.nodeCount ?? 0} 个 · 当前 ${state.nodes?.current ?? "—"} · 版本 ${state.version}`;
+		const badRules = state.rulesDiagnostics ?? [];
+		if (badRules.length > 0) {
+			$("#engine-line").append(` · ⚠ ${badRules.length} 条规则无法解析`);
+			$("#engine-line").title = badRules.map((entry) => `${entry.line} — ${entry.error}`).join("\n");
+		} else {
+			$("#engine-line").title = "";
+		}
 
 		// channels
 		for (const [channel, mode] of Object.entries(state.modes ?? {})) {

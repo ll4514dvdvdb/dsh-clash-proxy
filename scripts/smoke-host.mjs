@@ -147,12 +147,14 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 await check("route serves the page and its state api", async () => {
 	const page = await fetch(`${origin}/clash-proxy-panel/`);
 	assert.equal(page.status, 200);
-	assert.match(await page.text(), /代理面板/);
-	const state = await fetch(`${origin}/clash-proxy-panel/api/state`, { headers: { "x-clash-proxy": "1" } });
+	const html = await page.text();
+	assert.match(html, /代理面板/);
+	const token = /<meta name="clash-proxy-token" content="([^"]+)"/.exec(html)?.[1] ?? "";
+	const state = await fetch(`${origin}/clash-proxy-panel/api/state`, { headers: { "x-clash-proxy-token": token } });
 	assert.equal(state.status, 200);
 	const body = await state.json();
 	assert.equal(body.enabled, false);
-	assert.equal(body.version, "0.2.0");
+	assert.equal(body.version, "0.3.0");
 	assert.equal(typeof body.env.powershell, "object");
 });
 

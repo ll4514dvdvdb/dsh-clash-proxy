@@ -36,6 +36,7 @@ const manager = {
 	async selectNode() {},
 	status: () => ({ state: "running", port: 19000, nodeCount: 2, current: "n1", selected: "n1", error: undefined }),
 	decide: (host) => (String(host).endsWith(".cn") ? "direct" : "proxy"),
+	rulesDiagnostics: () => [{ line: "IP-CIDR,10.0.0.0/33,DIRECT", error: "prefix out of range" }],
 	nodeSummary: () => ({
 		nodes: [{ name: "n1", type: "ss", delay: 120, mbps: 12.5, current: true, selected: true }],
 		current: "n1",
@@ -69,7 +70,7 @@ await controller.init();
 
 await check("snapshot is JSON and carries the panel contract", () => {
 	const state = controller.state();
-	assert.equal(state.version, "0.2.0");
+	assert.equal(state.version, "0.3.0");
 	assert.equal(typeof state.engine.port, "number");
 	assert.equal(state.nodes.current, "n1");
 	assert.ok(Array.isArray(state.decisions));
@@ -152,6 +153,12 @@ await check("connectivity probe is exposed", async () => {
 await check("env lines exist only with a port", async () => {
 	const env = controller.proxyEnv();
 	assert.ok(env.powershell.some((line) => line.includes("19000")));
+});
+
+await check("invalid rules surface in state, not silently", async () => {
+	const diagnostics = controller.state().rulesDiagnostics;
+	assert.equal(diagnostics.length, 1);
+	assert.match(diagnostics[0].line, /^IP-CIDR,/);
 });
 
 await check("switching off stops the engine and clears the browser", async () => {

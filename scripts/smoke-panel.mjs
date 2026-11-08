@@ -51,6 +51,26 @@ await check("reload reads what was written", async () => {
 	assert.equal(again.value.modes.web, "auto");
 });
 
+await check("concurrent patches keep the file valid", async () => {
+	const path = join(directory, "concurrent.json");
+	const concurrent = new PanelStore({ path });
+	await concurrent.load();
+	await Promise.all(Array.from({ length: 10 }, (_, index) => concurrent.patch({ auto: { cacheSeconds: 100 + index } })));
+	const reread = new PanelStore({ path });
+	await reread.load();
+	assert.equal(reread.value.auto.cacheSeconds, 109, "last writer wins, file never torn");
+});
+
+await check("corrupt settings are quarantined, not silently reset", async () => {
+	const path = join(directory, "corrupt.json");
+	await (await import("node:fs/promises")).writeFile(path, "{ not json");
+	const broken = new PanelStore({ path });
+	const value = await broken.load();
+	assert.equal(value.enabled, false);
+	const files = await (await import("node:fs/promises")).readdir(directory);
+	assert.ok(files.some((name) => name.startsWith("corrupt.json.corrupt-")), "damaged file kept for inspection");
+});
+
 await check("merge replaces arrays, keeps objects", () => {
 	const merged = mergeSettings({ a: { b: 1, c: [1, 2] }, d: 1 }, { a: { c: [3] }, d: 2 });
 	assert.deepEqual(merged, { a: { b: 1, c: [3] }, d: 2 });
@@ -121,11 +141,19 @@ async function get(path, headers = {}) {
 	return { status: response.status, text: await response.text(), type: response.headers.get("content-type") };
 }
 
+// The token is injected into the served HTML; the page reads it from a <meta>.
+const shell = await get("/clash-proxy-panel/");
+const TOKEN = /<meta name="clash-proxy-token" content="([^"]+)"/.exec(shell.text)?.[1] ?? "";
+const auth = { "x-clash-proxy-token": TOKEN };
+
 await check("serves the page", async () => {
-	const page = await get("/clash-proxy-panel/");
-	assert.equal(page.status, 200);
-	assert.match(page.type ?? "", /text\/html/);
-	assert.match(page.text, /代理面板/);
+	assert.equal(shell.status, 200);
+	assert.match(shell.type ?? "", /text\/html/);
+	assert.match(shell.text, /代理面板/);
+});
+await check("page carries a token, not the placeholder", () => {
+	assert.ok(TOKEN.length >= 32, `token too short: ${TOKEN.length}`);
+	assert.ok(!shell.text.includes("__CLASH_PROXY_TOKEN__"));
 });
 await check("serves assets", async () => {
 	for (const asset of ["app.js", "app.css"]) {
@@ -139,16 +167,26 @@ await check("unknown asset is a 404, unknown page is the shell", async () => {
 	assert.equal(shell.status, 200);
 	assert.match(shell.text, /<!doctype html>/i);
 });
-await check("api needs the custom header", async () => {
+await check("api needs the panel token", async () => {
 	assert.equal((await get("/clash-proxy-panel/api/state")).status, 403);
-	const ok = await get("/clash-proxy-panel/api/state", { "x-clash-proxy": "1" });
+	assert.equal((await get("/clash-proxy-panel/api/state", { "x-clash-proxy": "1" })).status, 403, "legacy header alone is not auth");
+	assert.equal((await get("/clash-proxy-panel/api/state", { "x-clash-proxy-token": "nope" })).status, 403);
+	const ok = await get("/clash-proxy-panel/api/state", auth);
 	assert.equal(ok.status, 200);
 	assert.equal(JSON.parse(ok.text).version, "test");
+});
+await check("cross-site requests are refused even with a token", async () => {
+	const bySite = await get("/clash-proxy-panel/api/state", { ...auth, "sec-fetch-site": "cross-site" });
+	assert.equal(bySite.status, 403);
+	const byOrigin = await get("/clash-proxy-panel/api/state", { ...auth, origin: "http://evil.example" });
+	assert.equal(byOrigin.status, 403);
+	const sameOrigin = await get("/clash-proxy-panel/api/state", { ...auth, "sec-fetch-site": "same-origin" });
+	assert.equal(sameOrigin.status, 200);
 });
 await check("non-loopback Host is refused", async () => {
 	const status = await new Promise((resolve, reject) => {
 		const request = http.request(
-			{ host: "127.0.0.1", port: server.address().port, path: "/clash-proxy-panel/api/state", headers: { host: "evil.example", "x-clash-proxy": "1" } },
+			{ host: "127.0.0.1", port: server.address().port, path: "/clash-proxy-panel/api/state", headers: { host: "evil.example", ...auth } },
 			(response) => {
 				response.resume();
 				resolve(response.statusCode);
@@ -160,18 +198,30 @@ await check("non-loopback Host is refused", async () => {
 	assert.equal(status, 403);
 });
 await check("api rejects unknown endpoints and bad modes", async () => {
-	const unknown = await fetch(`${origin}/clash-proxy-panel/api/nope`, { method: "POST", headers: { "x-clash-proxy": "1" } });
+	const unknown = await fetch(`${origin}/clash-proxy-panel/api/nope`, { method: "POST", headers: auth });
 	assert.equal(unknown.status, 404);
 	const bad = await fetch(`${origin}/clash-proxy-panel/api/mode`, {
 		method: "POST",
-		headers: { "x-clash-proxy": "1", "content-type": "application/json" },
+		headers: { ...auth, "content-type": "application/json" },
 		body: JSON.stringify({ channel: "web", mode: "sometimes" })
 	});
-	assert.equal(bad.status, 500);
+	assert.equal(bad.status, 400, "input errors are 400 and safe to show");
+	const brokenJson = await fetch(`${origin}/clash-proxy-panel/api/mode`, {
+		method: "POST",
+		headers: { ...auth, "content-type": "application/json" },
+		body: "{ nope"
+	});
+	assert.equal(brokenJson.status, 400);
+});
+await check("names after the token round-trip through the page", async () => {
+	// Panel saves the token only in a <meta>, never in the URL or a cookie.
+	assert.ok(!shell.text.includes("?token="));
 });
 await check("static traversal is refused", async () => {
-	const response = await get("/clash-proxy-panel/../package.json");
-	assert.ok([403, 404].includes(response.status), `got ${response.status}`);
+	for (const path of ["/clash-proxy-panel/../package.json", "/clash-proxy-panel/%2e%2e%2fpackage.json", "/clash-proxy-panel/..%2f..%2fREADME.md"]) {
+		const response = await get(path);
+		assert.ok([400, 403, 404].includes(response.status), `${path} → ${response.status}`);
+	}
 });
 server.close();
 

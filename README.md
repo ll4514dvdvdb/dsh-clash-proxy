@@ -1,6 +1,8 @@
-# dsh-clash-proxy 0.2.0
+# dsh-clash-proxy 0.3.0
 
-DeepSeek Harness 的**按需代理插件**，带一个独立页面（GUI 里的「代理」页签，或直接开 `http://127.0.0.1:55238/clash-proxy-panel/`）。
+[![CI](https://github.com/ll4514dvdvdb/dsh-clash-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/ll4514dvdvdb/dsh-clash-proxy/actions/workflows/ci.yml)
+
+DeepSeek Harness 的**按需代理插件**，带一个独立页面（GUI 里的「代理」页签，或直接开 `http://127.0.0.1:<GUI 端口>/clash-proxy-panel/`；端口就是运行时 GUI 的端口）。
 
 不碰 Windows 系统代理、不改 WinHTTP、不开 TUN；默认全关，只有总开关打开、且某条通道判定「要走代理」时，流量才出本地。
 
@@ -88,12 +90,79 @@ This project is an on-demand proxy integration plugin for DeepSeek Harness. It i
 - 否则 → 走代理
 - 结果按主机缓存 `auto.cacheSeconds`（默认 600s），后台每 5s 预热一次
 
+## 规则语法与优先级
+
+支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`IP-CIDR6`、`GEOIP,CN`、`MATCH`，动作 `DIRECT` / `PROXY` / `REJECT`，尾部可带 `no-resolve`。大小写不敏感；尾点 FQDN（`baidu.com.`）、IDN（`中国.cn`）、方括号 IPv6 都会正规化后再匹配。
+
+优先级从高到低：
+
+1. 用户自定义 `extraRules`；
+2. 订阅里的规则（只有 `DIRECT` / `REJECT` 生效——订阅不能替本插件挑选节点）；
+3. 内置国内域名后缀表 + 国内 IPv4/IPv6 表；
+4. 默认策略（`auto` 模式下再交给直连探活决定）。
+
+`excludeRules` 在引擎之前把主机摘掉，让它回到默认策略。
+
+非法规则**不会**被静默丢弃：解析失败的行进入 `RuleEngine.diagnostics`（最多 100 条），面板会显示「⚠ N 条规则无法解析」，鼠标悬停看具体行与原因。
+
+```yaml
+# 插件配置示例（DSH 插件 config 段）
+subscriptionUrl: "https://example.com/api/v1/client/subscribe?token=REDACTED"
+extraRules:
+  - "DOMAIN-SUFFIX,internal.corp.example,DIRECT"
+  - "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve"
+  - "IP-CIDR6,fd00::/8,DIRECT,no-resolve"
+  - "DOMAIN-KEYWORD,corp,DIRECT"
+  - "GEOIP,CN,DIRECT"
+  - "MATCH,PROXY"
+excludeRules:
+  - "DOMAIN-SUFFIX,example.com"
+autoUpdateHours: 6
+latencyTestUrl: "http://cp.cloudflare.com/generate_204"
+latencyTimeoutMs: 5000
+```
+
 ## 四条通道怎么落地
 
 - **web.fetch**：注册 `clash-proxy-fetch` 作为 `ctx.web` 的 fetch provider，并在总开关打开时把 `web.fetchProvider` 指过来；关掉时还原。
 - **search**：注册 `clash-proxy-search`，只在**委托给上游搜索引擎的那一次调用期间**给 `node:http(s)` 装 CONNECT 隧道（不长期污染进程，模型 API 等其它请求不受影响）；没有可委托的上游时 `available()` 为 false，直接回退。
 - **scripts**：`installNodeTunnel()` 包装 `node:http(s).request`，命中判定才换 agent；`proxy_control env` 可导出 `HTTP(S)_PROXY` 给外部脚本用。
 - **browser**：`playwright-core` 起一个独立 Chromium（默认 channel `msedge`，独立 userDataDir），带 `proxy` 与 `locale/timezoneId/userAgent/accept-language`，再用 `addInitScript` 补 `navigator.language(s)`、WebRTC 候选、`webdriver`。dsh-reef 的浏览器没有注入点，不受其影响。
+
+## 架构
+
+```
+                     ┌──────────────── DeepSeek Harness 进程 ────────────────┐
+  web.fetch ─┐       │                                                       │
+  search ────┼─► controller.decideFetch(url) / decideTunnel(host)            │
+  scripts ───┘       │      ├─ 规则引擎 rules.js  用户规则 > 订阅规则 > CN 表  │
+                     │      ├─ AutoDecider auto.js  直连 TCP 探活 + 缓存      │
+                     │      └─ 通道开关/模式 store.js                         │
+                     │      ▼                                                │
+                     │  proxy-server.js  127.0.0.1:随机端口（HTTP + SOCKS5）  │
+                     │      ▼                                                │
+                     │  transports.js  http / socks5 / ss / trojan / vless /  │
+                     │                 vmess（→ 节点 → 远端）                  │
+                     └───────────────────────────────────────────────────────┘
+        panel/routes.js ── web/ 静态页 + /api/*（令牌 + loopback + 同源校验）
+```
+
+## 代理协议支持范围
+
+「支持」指**节点字段的一个子集**能连上，不等于 Mihomo/Clash 内核兼容：不支持 `rule-providers`、完整 `proxy-groups` 策略组、TUN、fake-ip DNS、`dialer-proxy`、脚本规则等。
+
+| 协议 | 支持度 | 传输 | 备注 |
+|---|---|---|---|
+| `http` | 完整 | CONNECT | 可选 `Proxy-Authorization`（Basic） |
+| `socks5` / `socks` | 完整 | CONNECT | no-auth 与 username/password |
+| `ss` | 完整 | AEAD | `aes-128-gcm`、`aes-256-gcm`、`chacha20-ietf-poly1305` |
+| `trojan` | 完整 | tcp / tls / ws | TLS 强制，`sni` 可覆盖，支持 `skip-cert-verify` |
+| `vless` | 部分 | tcp / tls / ws | **不支持 reality / `xtls-rprx-vision`**（需要 uTLS 指纹） |
+| `vmess` | 部分 | tcp / ws（AEAD） | `alterId` 必须为 0，加密固定 AES-128-GCM |
+| `hysteria2` / `hy2` | 暂不支持 | QUIC | 依赖 `lib/native/connector.exe`，本发行版**不含**该二进制 |
+| `tuic` | 暂不支持 | QUIC | 未实现 |
+
+节点类型不在上表的会被订阅解析保留但标记为不可用，`auto` 与延迟测试不会选它（见 `manager.isSupported()`）。
 
 ## 工具
 
@@ -108,15 +177,27 @@ This project is an on-demand proxy integration plugin for DeepSeek Harness. It i
 
 `GET state`、`GET traffic`、`POST toggle|settings|mode|scope|node|browser|decisions/clear|subscription/refresh|test/connectivity|test/latency|test/bandwidth`
 
-守卫：只接受 loopback Host（否则 403）；API 还要 `x-clash-proxy: 1` 头（跨站表单发不出、预检本路由不答）。
+守卫：只接受 loopback `Host`（否则 403）；API 需要面板令牌请求头 `x-clash-proxy-token`（每次插件启动随机生成、注入页面 `<meta name="clash-proxy-token">`），令牌缺失/错误一律 403；跨站请求（`Sec-Fetch-Site: cross-site` 或 `Origin` 主机与 `Host` 不一致）即使带对令牌也 403；`OPTIONS` 预检一律 405。旧的 `x-clash-proxy: 1` 常量头已不作为认证。
+
+## 安全模型
+
+1. **监听面**：只复用 DSH 的 `webServer`，路径前缀 `/clash-proxy-panel`，没有独立端口、不监听非 loopback 地址。
+2. **来源校验**：`Host` 必须是 `127.0.0.1` / `localhost` / `[::1]`；浏览器跨站请求带 `Sec-Fetch-Site` 与 `Origin`，两者都校验。
+3. **身份**：API 需要每实例随机令牌，`timingSafeEqual` 比较；令牌不进 URL、不进日志、不进错误响应。
+4. **错误**：内部错误只回 `{ ok:false, error:"internal error", ref }`，真实原因脱敏后写宿主日志；只有参数校验错误（`PanelInputError`）回显给页面。
+5. **静态文件**：`fs.realpath` 校验真实路径仍在 `web/`（阻挡 `..` 与符号链接逃逸），响应带 `nosniff` 与 `frame-ancestors 'self'`。
+6. **磁盘**：`panel.json` / `state.json` / 订阅缓存均为原子写（临时文件 → `fsync` → `rename`，权限 0600）；配置损坏时改名隔离为 `*.corrupt-<时间戳>`，不静默丢设置；订阅 URL 不落盘。
+
+详细问题清单（风险等级、代码位置、修复证据）见 [docs/AUDIT.md](docs/AUDIT.md)。
 
 ## 数据目录
 
 `%USERPROFILE%\.dsh\clash-proxy\`（非 Windows 平台为 `~/.dsh/clash-proxy/`）
 
-- `subscription.yaml` / `subscription.meta.json` / `sub.url`：订阅缓存与凭据
+- `subscription.yaml` / `subscription.meta.json` / `sub.url`：订阅缓存与凭据（`meta.json` 只存时间戳，不存 URL）
 - `state.json`：选中的节点
 - `panel.json`：页面设置（总开关、通道、伪装、测速目标）
+- `panel.json.corrupt-<时间戳>`：损坏被隔离的旧配置
 - `browser-profile/`：面板自建 Chromium 的 profile
 
 订阅主机在 Cloudflare 后面，只对 HTTP/2 正常响应、同一出口 IP 反复拉会降速；刷新顺序：经代理拉 → 直连 h2 → 直连 h1。
@@ -124,19 +205,30 @@ This project is an on-demand proxy integration plugin for DeepSeek Harness. It i
 ## 自检
 
 ```powershell
-node scripts/smoke-panel.mjs        # 存储/判定/路由/隧道 20 项
-node scripts/smoke-host.mjs         # 真 apply() + 假 cordis 宿主 10 项
-node scripts/smoke-controller.mjs   # 控制器与通道判定 11 项
-node scripts/smoke-client.mjs       # 客户端 bundle 注册 4 项
+npm test                            # 70 项离线测试：规则 13 / 隧道 12 / 传输 13 / 入站 17 / 面板 14
+npm run smoke                       # 面板 25 + 宿主 10 + 控制器 12 + 客户端 bundle 4
+npm run smoke:net                   # 真实网络冒烟（需要公网 + 你自己的订阅，不进 CI）
 node scripts/bench-node.mjs [host] [budgetMs] [nameFilter]   # 单节点隧道吞吐诊断
 ```
 
+单个套件也可以直接跑：`node tests/rules.test.mjs` 这类文件自带执行入口。
+
+## 持续集成
+
+`.github/workflows/ci.yml` 在 Node 20 / 22 / 24 上跑：语法检查 → `npm test` → `npm run smoke` → `npm audit`（高层漏洞）→ 打包内容检查（`web/index.html` 必须还是令牌占位符）。
+
+`scripts/smoke.mjs`（真实公网 + 真实订阅）**不进 CI**，因为它需要外部网络与凭据；CI 里不做假通过。
+
 ## 已知限制
 
-- 订阅里没有 hysteria2 / tuic / reality 节点（纯 JS 实现不覆盖）
+- hysteria2 / tuic / VLESS REALITY 未实现（需要 native connector 或 uTLS，本发行版不含）
+- 绝对形式的 `https://` 请求不代理，返回 501（正确方式是 CONNECT；HTTP 客户端不会这样发）
+- 进程内中继没有显式背压：大流量上传到慢上游时依赖 Node 自身写缓冲
 - 带宽采样是**窗口式**（默认 8s，多目标回退），慢节点上数值偏低是真实值，不是 bug
+- 国内 IP / 域名数据是构建时快照，没有在线增量更新
 - 页签（`conversation.view`）要等 GUI 重新加载页面才会出现；插件热重载只更新宿主侧
 - 只影响 harness 进程内（+ 面板自建浏览器）的流量，不做系统级全局代理
+- `manager.handleHttp()` 是遗留端点集合，仓库内无调用方，未删除（见 AUDIT「保留未改」）
 
 ## 许可证
 
