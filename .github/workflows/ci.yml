@@ -39,12 +39,17 @@ jobs:
       - name: Unit and integration tests (offline)
         run: npm test
 
-      - name: Panel / host / controller / client smoke tests (offline)
+      - name: Panel / controller / client smoke tests (offline)
         run: npm run smoke
 
+      # smoke-host.mjs imports lib/index.js, which imports the harness packages
+      # (@deepseek-ai/dsh-tools and friends). They are optional peers here by
+      # design — the plugin must not install its own copy of the runtime — so
+      # this job cannot load the plugin at all. Run `npm run smoke:host` in a
+      # profile that has the harness installed. Documented gap, not a pass.
+      #
       # smoke.mjs (repo root) needs the public internet and a real subscription, so
       # it is deliberately not part of CI. Run it locally with `npm run smoke:net`.
-      # This is a documented gap, not a passing result.
 
       - name: Dependency audit
         # Registry outages must not turn a code review into a red build, but the

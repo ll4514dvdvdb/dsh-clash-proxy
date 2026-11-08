@@ -2,6 +2,20 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.3.1] — 2026-11-08
+
+只动测试编排与发布产物，插件行为与 0.3.0 相同。
+
+### Fixed
+
+- CI 在 Node 20 / 22 / 24 上全红：`npm run smoke` 串了 `smoke-host.mjs`，而它 `import lib/index.js` → `@deepseek-ai/dsh-tools`。这些包是本插件的**可选 peer**（插件不自带运行时），干净环境里装不到，于是整个 smoke 步骤以 `ERR_MODULE_NOT_FOUND` 失败。
+- `npm run smoke` 现在只跑不需要宿主的三组（面板 25 + 控制器 12 + 客户端 bundle 4）；`npm run smoke:host` 单独跑宿主 10 项，`npm run smoke:all` 两者都跑。README 与 `ci.yml` 注释写明这是**文档化的缺口，不是通过**。
+
+### Added
+
+- `docs/screenshots/panel.png` 与 `screenshots.json`（市场卡片截图）、`docs/icon.png`（市场图标）。
+- GitHub Release 附预构建 `dsh-clash-proxy.tgz`（资产名不带版本号，`releases/latest/download/` 才能解析）。
+
 ## [0.3.0] — 2026-11-06
 
 安全与正确性修复版本。没有新增用户可见功能，默认分流策略未改动。
