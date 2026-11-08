@@ -2,6 +2,11 @@
   "name": "dsh-clash-proxy",
   "version": "0.2.0",
   "license": "MIT",
+  "author": "Mapleassault (ll4514dvdvdb)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ll4514dvdvdb/dsh-clash-proxy.git"
+  },
   "description": "On-demand rule-splitting proxy for DeepSeek Harness with its own page: loopback listener, web/search/scripts/browser channels, per-node speed and bandwidth tests, connectivity probes, node selection, and optional fingerprint camouflage. Chinese traffic goes direct, everything else through a subscription node; the system proxy is never touched. Software only - ships no nodes, servers or subscriptions; you are responsible for lawful use (see README disclaimer).",
   "type": "module",
   "main": "lib/index.js",
