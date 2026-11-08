@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/ll4514dvdvdb/dsh-clash-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/ll4514dvdvdb/dsh-clash-proxy/actions/workflows/ci.yml)
 
+![代理面板](docs/screenshots/panel.png)
+
 DeepSeek Harness 的**按需代理插件**，带一个独立页面（GUI 里的「代理」页签，或直接开 `http://127.0.0.1:<GUI 端口>/clash-proxy-panel/`；端口就是运行时 GUI 的端口）。
 
 不碰 Windows 系统代理、不改 WinHTTP、不开 TUN；默认全关，只有总开关打开、且某条通道判定「要走代理」时，流量才出本地。
